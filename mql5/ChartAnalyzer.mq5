@@ -7,7 +7,7 @@
 #property strict
 
 //--- Input parameters
-input string           ServerURL      = "http://127.0.0.1:8000/analyze";  // Python backend URL
+input string           ServerURL      = "http://192.168.1.3:8000/analyze";  // Python backend URL
 input string           Symbol_        = "XAUUSD";                          // Symbol to analyze
 input ENUM_TIMEFRAMES  Timeframe_     = PERIOD_M5;                         // Timeframe (M1, M5, M15...)
 input int              OHLCBars       = 50;                                // Number of bars to send

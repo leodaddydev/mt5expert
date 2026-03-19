@@ -15,8 +15,8 @@
 #property strict
 
 //=== Python AI Server ================================================
-input string ServerURL      = "http://127.0.0.1:8000/analyze"; // Python backend URL
-input int    OHLCBars       = 50;                              // OHLC bars to send
+input string ServerURL      = "http://192.168.1.3:8000/analyze"; // Python backend URL
+input int    OHLCBars       = 200;                             // OHLC bars to send (200 = ~16h M5, enough for EMA50+RSI warmup)
 input int    RequestTimeout = 60000;                           // HTTP timeout ms
 input double MinConfidence  = 0.65;                            // Min AI confidence to trade
 
@@ -36,7 +36,7 @@ input double SidewayThreshold    = 0.3;   // Sideways: |EMA20-EMA50| < factor*AT
 input double SR_DistMultiplier   = 0.5;   // Min distance to S/R (factor*ATR)
 input double MinBodyRatio        = 0.3;   // Min candle body/range ratio
 input bool   UseSessionFilter    = true;  // Trade only London+NY sessions
-input int    MaxSpreadPoints     = 30;    // Max spread in broker points
+input double MaxSpreadUSD        = 3.0;   // Max allowed spread in price units (e.g. 3.0 = $3 for XAUUSD)
 
 //=== EA Settings =====================================================
 input int    MagicNumber         = 20260319;
@@ -124,11 +124,14 @@ void OnTick()
       return;
    g_LastBarTime = currentBarTime;
 
-   //--- Spread check
-   long spread = SymbolInfoInteger(SYMBOL, SYMBOL_SPREAD);
-   if(spread > MaxSpreadPoints)
+   //--- Spread check (compare in price units, works for any symbol)
+   double ask    = SymbolInfoDouble(SYMBOL, SYMBOL_ASK);
+   double bid    = SymbolInfoDouble(SYMBOL, SYMBOL_BID);
+   double spread = ask - bid;
+   if(spread > MaxSpreadUSD)
    {
-      Log("Spread " + IntegerToString((int)spread) + " pts exceeds limit. Skip.");
+      Log("Spread " + DoubleToString(spread, _Digits) +
+          " exceeds limit " + DoubleToString(MaxSpreadUSD, _Digits) + ". Skip.");
       return;
    }
 

@@ -40,11 +40,11 @@ class OllamaClient:
     Re-uses a single httpx.AsyncClient per instance (call .aclose() when done).
     """
 
-    def __init__(self, base_url: str, timeout: float = 120.0) -> None:
+    def __init__(self, base_url: str, timeout: float = 300.0) -> None:
         self.base_url = base_url.rstrip("/")
         self._client  = httpx.AsyncClient(
             base_url=self.base_url,
-            timeout=httpx.Timeout(timeout, connect=10.0),
+            timeout=httpx.Timeout(timeout, connect=10.0, read=timeout, write=30.0),
         )
 
     async def aclose(self) -> None:
@@ -106,6 +106,9 @@ class OllamaClient:
             model, bool(image_path), len(prompt),
         )
 
+        # ── Log equivalent curl call for debugging ──────────────────────────
+        _log_curl_equivalent(self.base_url, payload, logger)
+
         response = await self._client.post("/api/generate", json=payload)
         response.raise_for_status()
 
@@ -154,6 +157,48 @@ def _ns_to_ms(nanoseconds: int) -> str:
     if not nanoseconds:
         return "N/A"
     return f"{nanoseconds / 1_000_000:.0f}ms"
+
+
+def _log_curl_equivalent(base_url: str, payload: Dict[str, Any], log) -> None:
+    """
+    Log a copy-pasteable curl command equivalent to the Ollama API call.
+    Images are truncated to first 60 chars so the log stays readable.
+    Controlled by Settings.log_llm_curl (default True).
+    """
+    from server.config import get_settings
+    settings = get_settings()
+
+    # Build a sanitised copy for logging (truncate base64 images)
+    log_payload = payload.copy()
+    if "images" in log_payload:
+        log_payload["images"] = [
+            img[:60] + f"...<truncated {len(img)} chars>" if len(img) > 60 else img
+            for img in log_payload["images"]
+        ]
+
+    payload_json = json.dumps(log_payload, ensure_ascii=False, indent=2)
+
+    curl_cmd = (
+        f"curl -s -X POST {base_url}/api/generate \\\n"
+        f"  -H 'Content-Type: application/json' \\\n"
+        f"  -d '{payload_json}'"
+    )
+
+    emit = log.info if settings.log_llm_curl else log.debug
+    emit(
+        "LLM curl equivalent:\n%s",
+        curl_cmd,
+    )
+    log.info(
+        "LLM request → %s/api/generate  model=%s  stream=%s  has_image=%s  "
+        "prompt_len=%d  temperature=%s",
+        base_url,
+        payload.get("model"),
+        payload.get("stream"),
+        bool(payload.get("images")),
+        len(payload.get("prompt", "")),
+        payload.get("options", {}).get("temperature"),
+    )
 
 
 def safe_parse_json(text: str) -> Dict[str, Any]:

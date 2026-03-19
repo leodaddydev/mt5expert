@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "deepseek-llm:7b"          # text-only default
     ollama_vision_model: str = "llava:7b"           # vision model (optional)
-    ollama_timeout: float = 120.0                   # seconds
+    ollama_timeout: float = 300.0                   # seconds (increase if model is slow)
     use_vision_model: bool = False                  # set True if llava is pulled
 
     # ── Storage ──────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     server_host: str = "0.0.0.0"
     server_port: int = 8000
     log_level: str = "INFO"
+    log_llm_curl: bool = True          # Log equivalent curl call for each LLM request
 
     # ── Config meta ──────────────────────────────────────────────────
     model_config = SettingsConfigDict(
