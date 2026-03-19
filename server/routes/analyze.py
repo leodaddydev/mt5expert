@@ -19,8 +19,9 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from server.config import get_settings
 from server.llm.vision_analyzer import analyze_chart
-from server.models.schemas import AnalyzeRequest, AnalyzeResponse
+from server.models.schemas import AnalyzeRequest, AnalyzeResponse, ScoringDetail
 from server.services import image_service, ohlc_service, scoring
+from server.services.scoring import scoring_result_to_dict
 from server.utils.logging import get_logger
 
 router = APIRouter()
@@ -86,12 +87,20 @@ async def analyze(request_body: AnalyzeRequest, request: Request) -> AnalyzeResp
     # ── 4. Build OHLC text summary ───────────────────────────────────
     ohlc_summary = ohlc_service.summarize(validated_ohlc, symbol)
 
-    # ── 5. Call LLM ──────────────────────────────────────────────────
+    # ── 5. Compute rule-based scoring (before LLM) ───────────────────
+    rule_signal, rule_score, scoring_result = scoring.compute_rule_signal(
+        validated_ohlc,
+        indicators=request_body.indicators,
+    )
+
+    # ── 6. Call LLM with full context ────────────────────────────────
     try:
         llm_response = await analyze_chart(
             client=ollama_client,
             ohlc_summary=ohlc_summary,
             image_path=image_path,
+            indicators=request_body.indicators,
+            scoring_result=scoring_result,
         )
     except ValueError as exc:
         logger.error("LLM parse error: %s", exc)
@@ -106,24 +115,31 @@ async def analyze(request_body: AnalyzeRequest, request: Request) -> AnalyzeResp
             detail=f"Ollama service error: {exc}",
         )
 
-    # ── 6. Rule-based scoring ─────────────────────────────────────────
-    rule_signal, rule_score = scoring.compute_rule_signal(validated_ohlc)
+    # ── 7. Combine scores ─────────────────────────────────────────────
     final_signal, combined_score = scoring.combine_scores(
         llm_signal=llm_response.signal,
         llm_confidence=llm_response.confidence,
         rule_signal=rule_signal,
         rule_score=rule_score,
+        scoring_result=scoring_result,
     )
 
+    # Attach final combined score to scoring_result for storage
+    scoring_result.final_score = combined_score
+
     logger.info(
-        "Analysis complete  LLM=%s(%.2f)  Rule=%s(%.2f)  Combined=%s(%.2f)  elapsed=%.2fs",
+        "Analysis complete  LLM=%s(%.2f)  Rule=%s(additive=%.1f,norm=%.2f)  Combined=%s(%.2f)  elapsed=%.2fs",
         llm_response.signal, llm_response.confidence,
-        rule_signal, rule_score,
+        rule_signal, scoring_result.additive_score, rule_score,
         final_signal, combined_score,
         time.perf_counter() - t_start,
     )
 
-    # ── 7. Build final response ───────────────────────────────────────
+    # ── 8. Build final response ───────────────────────────────────────
+    scoring_dict = scoring_result_to_dict(scoring_result)
+    scoring_detail = ScoringDetail(**{k: v for k, v in scoring_dict.items()
+                                      if k in ScoringDetail.model_fields})
+
     return AnalyzeResponse(
         trend=llm_response.trend,
         support=llm_response.support,
@@ -132,8 +148,9 @@ async def analyze(request_body: AnalyzeRequest, request: Request) -> AnalyzeResp
         confidence=llm_response.confidence,
         reason=llm_response.reason,
         rule_signal=rule_signal,
-        rule_score=rule_score,
-        combined_score=combined_score,
+        rule_score=round(rule_score, 4),
+        combined_score=round(combined_score, 4),
+        scoring=scoring_detail,
         symbol=symbol,
         timeframe=timeframe,
         image_path=image_path,
